@@ -5,6 +5,8 @@ A fidget spinner for your terminal, built with [ratatui](https://ratatui.rs).
 Flick it with the arrow keys, watch it spin down like the real thing, and
 catch it going rainbow if you get it up to full speed.
 
+![demo](assets/demo.gif)
+
 ## Features
 
 - Fills the whole terminal, rendered with true-color half-block pixels (not ASCII art)
