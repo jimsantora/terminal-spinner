@@ -41,8 +41,8 @@ const LEVELS: [Level; 4] = [
     Level {
         min_arc: 0.0,
         arc: 0.0,
-        buckets: 72,
-        max_side: 576.0,
+        buckets: 120,
+        max_side: 512.0,
     },
     Level {
         min_arc: 2.0,
@@ -68,11 +68,11 @@ const RAINBOW_LEVEL: u8 = 3;
 const RAINBOW_HUES: u8 = 16;
 const RAINBOW_BUCKETS: usize = 12;
 
-/// Frame rate the blur levels are tuned for.
+/// Frame rate the blur levels are tuned for (independent of the tick rate).
 const FPS: f64 = 60.0;
 /// Upload at most this much image data per tick, so pre-warming never
 /// stalls the animation.
-const UPLOAD_BUDGET: usize = 2 << 20;
+const UPLOAD_BUDGET: usize = 512 << 10;
 /// Kitty's protocol limit for one escape code's payload chunk.
 const CHUNK: usize = 4096;
 /// Image ids we use; high enough to stay clear of other programs.
