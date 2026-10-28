@@ -46,4 +46,3 @@ Sleep 500ms
 
 # quit
 Type "q"
-Sleep 250ms
