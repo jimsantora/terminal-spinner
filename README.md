@@ -7,6 +7,11 @@ catch it going rainbow if you get it up to full speed.
 
 ![demo](assets/demo.gif)
 
+> The demo shows the half-block renderer. In Ghostty 1.4+, Kitty, or any
+> other terminal that supports Kitty graphics animation, the spinner is
+> drawn at full pixel resolution, with smooth edges, shading and motion
+> blur, and looks much better.
+
 ## Features
 
 - Real-pixel rendering with the Kitty graphics protocol (Ghostty 1.4+, Kitty):
