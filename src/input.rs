@@ -76,14 +76,28 @@ mod unix {
             Ok(events)
         }
 
+        /// Wait for the tty to become readable. Uses `select` rather than
+        /// `poll`: on macOS, `poll` doesn't support `/dev/tty` and reports
+        /// it readable immediately, which would make `read` block.
         fn wait(&self, timeout: Duration) -> io::Result<bool> {
-            let mut fd = libc::pollfd {
-                fd: self.tty.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
+            let fd = self.tty.as_raw_fd();
+            let mut tv = libc::timeval {
+                tv_sec: timeout.as_secs() as libc::time_t,
+                tv_usec: timeout.subsec_micros() as libc::suseconds_t,
             };
-            let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
-            match unsafe { libc::poll(&mut fd, 1, ms) } {
+            let ready = unsafe {
+                let mut set: libc::fd_set = std::mem::zeroed();
+                libc::FD_ZERO(&mut set);
+                libc::FD_SET(fd, &mut set);
+                libc::select(
+                    fd + 1,
+                    &mut set,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut tv,
+                )
+            };
+            match ready {
                 -1 => {
                     let err = io::Error::last_os_error();
                     if err.kind() == io::ErrorKind::Interrupted {
