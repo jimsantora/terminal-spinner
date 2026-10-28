@@ -30,8 +30,10 @@ const BLUR_STEP_PX: f64 = 2.0;
 pub struct View {
     pub cx: f64,
     pub cy: f64,
-    /// Output pixels per spinner unit.
-    pub scale: f64,
+    /// Output pixels per spinner unit, horizontally and vertically. These
+    /// can differ slightly when an image is stretched to fit whole cells.
+    pub sx: f64,
+    pub sy: f64,
 }
 
 /// What to draw.
@@ -64,7 +66,7 @@ pub struct Shader {
 
 impl Shader {
     pub fn new(view: View, look: Look) -> Self {
-        let tip_px = view.scale * (R_ARM + R_LOBE);
+        let tip_px = view.sx.max(view.sy) * (R_ARM + R_LOBE);
         let samples = ((look.blur * tip_px / BLUR_STEP_PX).ceil() as usize).max(1);
         let lobes =
             [0.0, TAU / 3.0, 2.0 * TAU / 3.0].map(|a: f64| (R_ARM * a.cos(), R_ARM * a.sin()));
@@ -101,8 +103,8 @@ impl Shader {
 
     /// Premultiplied RGBA (0..1) for the pixel whose center is at (x, y).
     pub fn pixel(&self, x: f64, y: f64) -> [f64; 4] {
-        let u = (x - self.view.cx) / self.view.scale;
-        let v = (y - self.view.cy) / self.view.scale;
+        let u = (x - self.view.cx) / self.view.sx;
+        let v = (y - self.view.cy) / self.view.sy;
         if u * u + v * v > MAX_EXTENT * MAX_EXTENT {
             return [0.0; 4];
         }
@@ -123,7 +125,7 @@ impl Shader {
     }
 
     fn sample(&self, u: f64, v: f64, c: f64, s: f64) -> [f64; 4] {
-        let pw = 1.0 / self.view.scale;
+        let pw = 1.0 / self.view.sx.min(self.view.sy);
         let to_local = |x: f64, y: f64| (x * c - y * s, x * s + y * c);
 
         let (lx, ly) = to_local(u, v);

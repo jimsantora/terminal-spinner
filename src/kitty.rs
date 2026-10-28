@@ -42,7 +42,7 @@ const LEVELS: [Level; 6] = [
         min_arc: 0.0,
         arc: 0.0,
         buckets: 120,
-        max_side: 512.0,
+        max_side: 448.0,
     },
     Level {
         min_arc: 1.5,
@@ -186,13 +186,19 @@ impl Geometry {
         let rect_w = self.cols as f64 * self.cell_w;
         let rect_h = self.rows as f64 * self.cell_h;
         let q = (max_side / rect_w.max(rect_h)).min(1.0);
-        let view = View {
-            cx: (self.px_w / 2.0 - self.col0 as f64 * self.cell_w) * q,
-            cy: (self.px_h / 2.0 - self.row0 as f64 * self.cell_h) * q,
-            scale: self.px_w.min(self.px_h) / 2.0 * 0.92 * q,
-        };
         let w = (rect_w * q).round().max(1.0) as u32;
         let h = (rect_h * q).round().max(1.0) as u32;
+        // The terminal stretches the image over the placement, so map
+        // through the *rounded* size; otherwise each set's rounding error
+        // nudges the spinner a little, and it shifts as blur levels change.
+        let (qx, qy) = (w as f64 / rect_w, h as f64 / rect_h);
+        let scale = self.px_w.min(self.px_h) / 2.0 * 0.92;
+        let view = View {
+            cx: (self.px_w / 2.0 - self.col0 as f64 * self.cell_w) * qx,
+            cy: (self.px_h / 2.0 - self.row0 as f64 * self.cell_h) * qy,
+            sx: scale * qx,
+            sy: scale * qy,
+        };
         (w, h, view)
     }
 }
@@ -682,6 +688,32 @@ mod tests {
                 hue: Some(8)
             }
         );
+    }
+
+    #[test]
+    fn every_set_lines_up_on_screen() {
+        // Odd sizes so every set's image dimensions get rounded.
+        let g = Geometry {
+            px_w: 1237.0,
+            px_h: 811.0,
+            cell_w: 9.7,
+            cell_h: 19.3,
+            col0: 21,
+            row0: 0,
+            cols: 84,
+            rows: 42,
+        };
+        let (rect_w, rect_h) = (84.0 * 9.7, 42.0 * 19.3);
+        let center = (1237.0 / 2.0 - 21.0 * 9.7, 811.0 / 2.0);
+        let radius = 811.0 / 2.0 * 0.92;
+        for key in SetKey::all() {
+            let (w, h, v) = g.image(key.max_side());
+            let (sx, sy) = (rect_w / w as f64, rect_h / h as f64);
+            assert!((v.cx * sx - center.0).abs() < 1e-9, "{key:?}");
+            assert!((v.cy * sy - center.1).abs() < 1e-9, "{key:?}");
+            assert!((v.sx * sx - radius).abs() < 1e-9, "{key:?}");
+            assert!((v.sy * sy - radius).abs() < 1e-9, "{key:?}");
+        }
     }
 
     #[test]

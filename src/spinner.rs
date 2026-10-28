@@ -71,10 +71,12 @@ fn render_spinner(area: Rect, buf: &mut Buffer, angle: f64, hue: Option<f64>) {
         return;
     }
 
+    let scale = (w.min(2 * h)) as f64 / 2.0 * 0.92;
     let view = View {
         cx: w as f64 / 2.0,
         cy: h as f64,
-        scale: (w.min(2 * h)) as f64 / 2.0 * 0.92,
+        sx: scale,
+        sy: scale,
     };
     let shader = Shader::new(
         view,
