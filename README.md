@@ -9,7 +9,10 @@ catch it going rainbow if you get it up to full speed.
 
 ## Features
 
-- Fills the whole terminal, rendered with true-color half-block pixels (not ASCII art)
+- Real-pixel rendering with the Kitty graphics protocol (Ghostty 1.4+, Kitty):
+  anti-aliased edges, bevel shading, metal bearings, a soft drop shadow and
+  speed-dependent motion blur
+- Falls back to true-color half-block pixels everywhere else (not ASCII art)
 - Renders on your terminal's own background color/theme — no fixed backdrop
 - Realistic physics: taps accelerate it, friction winds it back down over a few seconds
 - Rainbow color cycle at top speed
@@ -24,9 +27,13 @@ catch it going rainbow if you get it up to full speed.
 | `?` | Toggle help popup |
 | `q` / `Esc` / `Ctrl+C` | Quit |
 
+Run with `--halfblock` to force the half-block renderer, e.g. to compare.
+
 ## Requirements
 
 - A terminal with true-color (24-bit RGB) support
+- For the high-res renderer: a terminal with Kitty graphics *animation*
+  support (Ghostty 1.4+, Kitty) on macOS or Linux
 - Rust 1.74+ (2021 edition)
 
 ## Build & run
@@ -67,9 +74,28 @@ archives to a new GitHub Release for that tag.
 ## How it works
 
 The spinner body is procedurally defined (a center hub plus three lobes at
-120° apart) and rasterized every frame into the terminal buffer using the
-half-block (`▀`) technique — each character cell is split into an
-independent top/bottom pixel via its foreground/background color, giving
-roughly square, fully-colored pixels instead of monochrome glyphs. See
-`src/spinner.rs` for the geometry and color logic, and `src/app.rs` for the
-spin physics (angular velocity, friction, acceleration).
+120° apart) as a signed distance field in `src/render.rs`. That gives
+anti-aliasing, the rounded bevel, fillets and the soft shadow almost for free.
+Lighting is fixed in screen space, so the highlights stay put while the
+spinner turns underneath them. `src/app.rs` holds the spin physics (angular
+velocity, friction, acceleration).
+
+**Kitty graphics** (`src/kitty.rs`): the spinner looks identical every 120°,
+so a set of frames covering one third of a turn is enough. Background
+threads render sets for six motion-blur levels plus 16 rainbow hues, and
+each set is uploaded once as a single animated Kitty image. After that,
+showing a frame is a ~25 byte `a=a,c=N` command instead of a full-screen
+repaint. Frames the spinner needs right now jump the render queue; until
+they arrive, the closest available frame is shown. If the terminal drops
+an image (e.g. under storage pressure), it is re-rendered on demand.
+
+Support is detected at startup by uploading a 1×1 image and adding a frame
+to it: terminals without animation support (such as Ghostty before 1.4)
+reject the frame and get the half-block renderer.
+
+**Half-block fallback**: each character cell is split into two pixels via
+the `▀` glyph's foreground/background colors, shaded with the same code.
+
+**Being a good citizen**: frames are wrapped in synchronized output (mode
+2026) so they never tear, and with visibility reports (mode 2033) the
+spinner stops drawing while its tab or window is hidden.

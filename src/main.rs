@@ -1,23 +1,37 @@
 mod app;
+mod input;
+mod kitty;
+mod render;
 mod spinner;
 
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::{
-    event::{self, Event, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
+        EnterAlternateScreen, LeaveAlternateScreen,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use app::App;
+use input::{Input, Reader};
+use kitty::{KittyRenderer, Pose};
 use spinner::{render_help_popup, SpinnerWidget};
 
+/// DEC mode 2033: the terminal tells us when we're hidden, so we can stop
+/// drawing (e.g. in a background tab).
+const VISIBILITY_REPORTS_ON: &[u8] = b"\x1b[?2033h";
+const VISIBILITY_REPORTS_OFF: &[u8] = b"\x1b[?2033l";
+
 fn restore_terminal() -> io::Result<()> {
+    let mut stdout = io::stdout();
+    let _ = stdout.write_all(VISIBILITY_REPORTS_OFF);
     disable_raw_mode()?;
-    execute!(io::stdout(), LeaveAlternateScreen)?;
-    execute!(io::stdout(), crossterm::cursor::Show)?;
+    execute!(stdout, LeaveAlternateScreen)?;
+    execute!(stdout, crossterm::cursor::Show)?;
     Ok(())
 }
 
@@ -30,6 +44,8 @@ impl Drop for TerminalGuard {
 }
 
 fn main() -> io::Result<()> {
+    let force_halfblock = std::env::args().skip(1).any(|a| a == "--halfblock");
+
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = restore_terminal();
@@ -40,35 +56,112 @@ fn main() -> io::Result<()> {
     execute!(io::stdout(), EnterAlternateScreen)?;
     let _guard = TerminalGuard;
 
+    let mut reader = Reader::new()?;
+    let kitty = if cfg!(unix) && !force_halfblock && kitty::detect(&mut reader, &mut io::stdout())?
+    {
+        Some(KittyRenderer::new())
+    } else {
+        None
+    };
+    if cfg!(unix) {
+        io::stdout().write_all(VISIBILITY_REPORTS_ON)?;
+    }
+
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    run_app(&mut terminal)
+    run_app(&mut terminal, &mut reader, kitty)
 }
 
-fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    reader: &mut Reader,
+    mut kitty: Option<KittyRenderer>,
+) -> io::Result<()> {
     let mut app = App::new();
-    let tick_rate = Duration::from_millis(16);
+    let mut visible = true;
+    // Ticks run on a fixed schedule so frames come out evenly spaced.
+    let mut next_tick = Instant::now();
+    // Kitty graphics commands, written after each ratatui draw.
+    let mut out = Vec::new();
+    let mut stdout = io::stdout();
 
     while app.running {
-        terminal.draw(|frame| {
-            let area = frame.area();
-            let rainbow = app.is_rainbow();
-            frame.render_widget(
-                SpinnerWidget::new(app.angle, rainbow, app.rainbow_phase),
-                area,
-            );
-            if app.show_help {
-                render_help_popup(frame, area);
+        if let Some(k) = kitty.as_mut() {
+            // No pixel size, or the terminal keeps rejecting our images:
+            // fall back to half-blocks.
+            if !k.sync_geometry(&mut out) || k.failed() {
+                kitty.take().unwrap().shutdown(&mut out);
             }
-        })?;
+        }
 
-        let timeout = tick_rate.saturating_sub(app.last_tick.elapsed());
-        if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    app.on_key(key.code, key.modifiers);
+        if visible {
+            execute!(stdout, BeginSynchronizedUpdate)?;
+            terminal.draw(|frame| {
+                let area = frame.area();
+                if kitty.is_none() {
+                    frame.render_widget(
+                        SpinnerWidget::new(app.angle, app.is_rainbow(), app.rainbow_phase),
+                        area,
+                    );
                 }
+                if app.show_help {
+                    let renderer = if kitty.is_some() {
+                        "Kitty graphics"
+                    } else {
+                        "half-block"
+                    };
+                    render_help_popup(frame, area, renderer);
+                }
+            })?;
+            if let Some(k) = kitty.as_mut() {
+                let pose = Pose {
+                    angle: app.angle,
+                    omega: app.omega,
+                    rainbow: app.is_rainbow(),
+                    rainbow_phase: app.rainbow_phase,
+                };
+                k.draw(&pose, app.show_help, &mut out);
+            }
+            stdout.write_all(&out)?;
+            execute!(stdout, EndSynchronizedUpdate)?;
+        } else if let Some(k) = kitty.as_mut() {
+            k.idle(&mut out);
+            stdout.write_all(&out)?;
+            stdout.flush()?;
+        }
+        out.clear();
+
+        // Kitty frames are ~25 byte commands, so match 120Hz displays.
+        // Half-block frames repaint the whole screen; keep those at 60Hz.
+        let tick_rate = match (visible, kitty.is_some()) {
+            (false, _) => Duration::from_millis(100),
+            (true, true) => Duration::from_micros(8_333),
+            (true, false) => Duration::from_micros(16_667),
+        };
+        next_tick += tick_rate;
+        let now = Instant::now();
+        if next_tick < now {
+            // Fell behind (e.g. a slow upload): don't try to catch up.
+            next_tick = now + tick_rate;
+        }
+
+        // Handle input until the next tick is due.
+        while let Some(timeout) = next_tick.checked_duration_since(Instant::now()) {
+            for event in reader.poll(timeout)? {
+                match event {
+                    Input::Key(code, modifiers) => app.on_key(code, modifiers),
+                    Input::Visible(v) => visible = v,
+                    Input::Graphics { id, message } => {
+                        if let Some(k) = kitty.as_mut() {
+                            k.on_response(id, &message, &mut out);
+                        }
+                    }
+                    Input::DeviceAttributes => {}
+                }
+            }
+            if !app.running {
+                break;
             }
         }
 
@@ -77,5 +170,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> 
         app.tick(dt);
     }
 
-    Ok(())
+    if let Some(k) = kitty {
+        k.shutdown(&mut out);
+    }
+    stdout.write_all(&out)?;
+    stdout.flush()
 }
