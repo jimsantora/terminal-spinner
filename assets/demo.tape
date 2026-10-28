@@ -1,5 +1,6 @@
 # Generate with: vhs assets/demo.tape
 # (run from the repo root, after `cargo build --release`)
+# Then shrink it: gifsicle -O3 --lossy=30 -b assets/demo.gif
 
 Output assets/demo.gif
 

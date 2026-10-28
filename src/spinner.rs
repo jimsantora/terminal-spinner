@@ -1,8 +1,8 @@
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::Color,
-    widgets::{Block, Borders, Clear, Paragraph, Widget},
+    widgets::{Block, Borders, Clear, Padding, Paragraph, Widget},
     Frame,
 };
 
@@ -104,7 +104,8 @@ fn render_spinner(area: Rect, buf: &mut Buffer, angle: f64, hue: Option<f64>) {
                     for (sub, out) in cell.iter_mut().enumerate() {
                         let y = (row * 2 + sub) as f64 + 0.5;
                         let [r, g, b, a] = to_rgba8(shader.pixel(x, y));
-                        *out = (a >= 128).then_some(Color::Rgb(r, g, b));
+                        *out =
+                            (a >= 128).then_some(Color::Rgb(quantize(r), quantize(g), quantize(b)));
                     }
                 }
             });
@@ -113,16 +114,28 @@ fn render_spinner(area: Rect, buf: &mut Buffer, angle: f64, hue: Option<f64>) {
 
     for (i, [top, bot]) in pixels.into_iter().enumerate() {
         let cell = &mut buf[(area.x + (i % w) as u16, area.y + (i / w) as u16)];
-        if top.is_none() && bot.is_none() {
-            cell.set_char(' ');
-            cell.set_fg(Color::Reset);
-            cell.set_bg(Color::Reset);
-        } else {
-            cell.set_char('▀');
-            cell.set_fg(top.unwrap_or(Color::Reset));
-            cell.set_bg(bot.unwrap_or(Color::Reset));
-        }
+        // An empty half must be the cell *background* (Reset shows the
+        // terminal's own background); as a foreground, Reset would draw it
+        // in the default text color.
+        let (ch, fg, bg) = match (top, bot) {
+            (None, None) => (' ', Color::Reset, Color::Reset),
+            (Some(t), b) => ('▀', t, b.unwrap_or(Color::Reset)),
+            (None, Some(b)) => ('▄', b, Color::Reset),
+        };
+        cell.set_char(ch);
+        cell.set_fg(fg);
+        cell.set_bg(bg);
     }
+}
+
+/// Half-block color step. Terminals cache each (glyph, fg, bg) combination
+/// they draw; smooth shading would create thousands of new ones per frame,
+/// which bogs down some terminals (e.g. xterm.js). At half-block size the
+/// coarser steps aren't noticeable.
+const COLOR_STEP: u32 = 32;
+
+fn quantize(v: u8) -> u8 {
+    ((v as u32 + COLOR_STEP / 2) / COLOR_STEP * COLOR_STEP).min(255) as u8
 }
 
 /// h in degrees [0,360), s and v in [0,1].
@@ -143,32 +156,20 @@ pub fn hsv_to_rgb(h: f64, s: f64, v: f64) -> Color {
     Color::Rgb(to_u8(r1), to_u8(g1), to_u8(b1))
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
+/// A `width` x `height` rect centered in `area`, shrunk to fit if needed.
+fn centered_box(width: u16, height: u16, area: Rect) -> Rect {
+    let w = width.min(area.width);
+    let h = height.min(area.height);
+    Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + (area.height - h) / 2,
+        w,
+        h,
+    )
 }
 
 pub fn render_help_popup(frame: &mut Frame, area: Rect, renderer: &str) {
-    let popup_area = centered_rect(50, 48, area);
-    frame.render_widget(Clear, popup_area);
-    let block = Block::default()
-        .title(" Terminal Fidget Spinner — Help ")
-        .borders(Borders::ALL);
+    let title = " Terminal Fidget Spinner — Help ";
     let text = format!(
         "\
 Controls:
@@ -186,6 +187,21 @@ Renderer: {renderer}
 
 Press ? or Esc to close."
     );
+
+    // Size the popup to its contents: borders plus one column of padding.
+    let lines = text.lines().count() as u16;
+    let longest = text
+        .lines()
+        .chain([title])
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0) as u16;
+    let popup_area = centered_box(longest + 4, lines + 2, area);
+    frame.render_widget(Clear, popup_area);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .padding(Padding::horizontal(1));
     let para = Paragraph::new(text).block(block);
     frame.render_widget(para, popup_area);
 }
