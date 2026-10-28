@@ -37,7 +37,7 @@ struct Level {
     max_side: f64,
 }
 
-const LEVELS: [Level; 4] = [
+const LEVELS: [Level; 6] = [
     Level {
         min_arc: 0.0,
         arc: 0.0,
@@ -45,26 +45,40 @@ const LEVELS: [Level; 4] = [
         max_side: 512.0,
     },
     Level {
-        min_arc: 2.0,
-        arc: 4.0,
-        buckets: 48,
-        max_side: 448.0,
+        min_arc: 1.5,
+        arc: 2.5,
+        buckets: 60,
+        max_side: 400.0,
     },
     Level {
-        min_arc: 6.0,
-        arc: 8.5,
-        buckets: 32,
+        min_arc: 3.5,
+        arc: 4.5,
+        buckets: 40,
         max_side: 352.0,
     },
     Level {
-        min_arc: 11.0,
+        min_arc: 5.5,
+        arc: 7.0,
+        buckets: 30,
+        max_side: 320.0,
+    },
+    Level {
+        min_arc: 8.5,
+        arc: 10.0,
+        buckets: 24,
+        max_side: 288.0,
+    },
+    Level {
+        min_arc: 11.5,
         arc: 15.0,
         buckets: 24,
         max_side: 256.0,
     },
 ];
-/// Rainbow mode only happens at top speed, so it always uses the blurriest level.
-const RAINBOW_LEVEL: u8 = 3;
+/// Rainbow mode only happens at top speed, so it always uses the blurriest
+/// level, at lower resolution since it's heavily blurred anyway.
+const RAINBOW_LEVEL: u8 = 5;
+const RAINBOW_MAX_SIDE: f64 = 224.0;
 const RAINBOW_HUES: u8 = 16;
 const RAINBOW_BUCKETS: usize = 12;
 
@@ -93,6 +107,14 @@ impl SetKey {
             RAINBOW_BUCKETS
         } else {
             LEVELS[self.level as usize].buckets
+        }
+    }
+
+    fn max_side(self) -> f64 {
+        if self.hue.is_some() {
+            RAINBOW_MAX_SIDE
+        } else {
+            LEVELS[self.level as usize].max_side
         }
     }
 
@@ -255,7 +277,7 @@ fn worker(shared: Shared, tx: Sender<(Encoded, bool)>) {
             }
         };
 
-        let (width, height, view) = geometry.image(LEVELS[job.key.level as usize].max_side);
+        let (width, height, view) = geometry.image(job.key.max_side());
         let rgba = render_rgba(width, height, view, job.key.look(job.bucket));
         let mut z = ZlibEncoder::new(Vec::new(), Compression::fast());
         z.write_all(&rgba).unwrap();
@@ -648,9 +670,11 @@ mod tests {
             rainbow_phase: 0.5,
         };
         assert_eq!(desired_set(&pose(0.5, false)).level, 0);
-        assert_eq!(desired_set(&pose(-4.0, false)).level, 1);
-        assert_eq!(desired_set(&pose(8.0, false)).level, 2);
-        assert_eq!(desired_set(&pose(14.0, false)).level, 3);
+        assert_eq!(desired_set(&pose(2.0, false)).level, 1);
+        assert_eq!(desired_set(&pose(-4.0, false)).level, 2);
+        assert_eq!(desired_set(&pose(8.0, false)).level, 3);
+        assert_eq!(desired_set(&pose(10.0, false)).level, 4);
+        assert_eq!(desired_set(&pose(14.0, false)).level, 5);
         assert_eq!(
             desired_set(&pose(17.0, true)),
             SetKey {

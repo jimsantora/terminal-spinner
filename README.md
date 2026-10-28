@@ -82,7 +82,7 @@ velocity, friction, acceleration).
 
 **Kitty graphics** (`src/kitty.rs`): the spinner looks identical every 120°,
 so a set of frames covering one third of a turn is enough. Background
-threads render sets for four motion-blur levels plus 16 rainbow hues, and
+threads render sets for six motion-blur levels plus 16 rainbow hues, and
 each set is uploaded once as a single animated Kitty image. After that,
 showing a frame is a ~25 byte `a=a,c=N` command instead of a full-screen
 repaint. Frames the spinner needs right now jump the render queue; until
